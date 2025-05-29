@@ -1,4 +1,4 @@
-Del Código a la Seguridad: Despliegue, Cumplimiento y Detección de Amenazas en AWS
+# Del Código a la Seguridad: Despliegue, Cumplimiento y Detección de Amenazas en AWS
 
 Este proyecto ofrece una solución integral para desplegar y asegurar infraestructuras en AWS utilizando prácticas modernas de Infrastructure as Code (IaC). Combina Terraform para el aprovisionamiento de recursos y Ansible para la configuración post-despliegue, incorporando mecanismos de cumplimiento normativo y detección de amenazas.
 
