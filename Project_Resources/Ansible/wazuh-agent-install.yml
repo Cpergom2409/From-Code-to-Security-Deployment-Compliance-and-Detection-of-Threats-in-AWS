@@ -1,0 +1,114 @@
+---
+# Playbook para instalar el agente Wazuh en todos los servidores del inventario
+# Este playbook:
+# 1. Detecta el sistema operativo
+# 2. Instala las dependencias necesarias
+# 3. Descarga e instala el agente Wazuh
+# 4. Configura y inicia el servicio
+
+- name: Instalar agente Wazuh en todos los servidores
+  hosts: all
+  become: yes
+  tasks:
+    # Tarea 1: Mostrar información del sistema
+    - name: Mostrar información del sistema
+      debug:
+        msg: 
+          - "Sistema operativo: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+          - "Familia: {{ ansible_os_family }}"
+          - "Gestor de paquetes: {{ ansible_pkg_mgr }}"
+
+    # Tarea 2: Verificar si es el servidor Wazuh Manager
+    - name: Verificar si es el servidor Wazuh Manager
+      shell: dpkg -l | grep wazuh-manager || echo "not_manager"
+      register: manager_check_debian
+      changed_when: false
+      when: ansible_os_family == "Debian"
+
+    - name: Verificar si es el servidor Wazuh Manager (RedHat)
+      shell: rpm -qa | grep wazuh-manager || echo "not_manager"
+      register: manager_check_redhat
+      changed_when: false
+      when: ansible_os_family == "RedHat"
+
+    # Tarea 3: Instalar dependencias en sistemas Debian/Ubuntu
+    - name: Instalar dependencias en Debian/Ubuntu
+      apt:
+        name: 
+          - curl
+          - apt-transport-https
+          - lsb-release
+        state: present
+        update_cache: yes
+      when: ansible_os_family == "Debian" and "not_manager" in manager_check_debian.stdout
+
+    # Tarea 4: Instalar dependencias en sistemas RedHat/CentOS
+    - name: Instalar dependencias en RedHat/CentOS
+      yum:
+        name:
+          - curl
+          - wget
+        state: present
+      when: ansible_os_family == "RedHat" and "not_manager" in manager_check_redhat.stdout
+
+    # Tarea 5: Descargar e instalar el agente Wazuh en Debian/Ubuntu
+    - name: Descargar e instalar agente Wazuh en Debian/Ubuntu
+      block:
+        - name: Descargar el paquete del agente Wazuh
+          get_url:
+            url: https://packages.wazuh.com/4.x/apt/pool/main/w/wazuh-agent/wazuh-agent_4.12.0-1_amd64.deb
+            dest: /tmp/wazuh-agent_4.12.0-1_amd64.deb
+            mode: '0644'
+
+        - name: Instalar el agente Wazuh
+          shell: |
+            WAZUH_MANAGER='{YOUR-WAZUH-MANAGER-IP}' WAZUH_AGENT_NAME='{{ inventory_hostname }}' dpkg -i /tmp/wazuh-agent_4.12.0-1_amd64.deb
+          args:
+            creates: /var/ossec/bin/wazuh-agentd
+      when: ansible_os_family == "Debian" and "not_manager" in manager_check_debian.stdout
+
+    # Tarea 6: Descargar e instalar el agente Wazuh en RedHat/CentOS
+    - name: Descargar e instalar agente Wazuh en RedHat/CentOS
+      block:
+        - name: Descargar el paquete del agente Wazuh
+          get_url:
+            url: https://packages.wazuh.com/4.x/yum/wazuh-agent-4.12.0-1.x86_64.rpm
+            dest: /tmp/wazuh-agent-4.12.0-1.x86_64.rpm
+            mode: '0644'
+
+        - name: Instalar el agente Wazuh
+          shell: |
+            WAZUH_MANAGER='{YOUR-WAZUH-MANAGER-IP}' WAZUH_AGENT_NAME='{{ inventory_hostname }}' rpm -i /tmp/wazuh-agent-4.12.0-1.x86_64.rpm
+          args:
+            creates: /var/ossec/bin/wazuh-agentd
+
+        - name: Verificar la instalación del agente
+          stat:
+            path: /var/ossec/bin/wazuh-agentd
+          register: agent_installed
+
+        - name: Mostrar resultado de la instalación
+          debug:
+            msg: "Agente Wazuh instalado: {{ agent_installed.stat.exists }}"
+      when: ansible_os_family == "RedHat" and "not_manager" in manager_check_redhat.stdout
+
+    # Tarea 7: Iniciar y habilitar el servicio Wazuh Agent
+    - name: Iniciar y habilitar el servicio Wazuh Agent
+      systemd:
+        name: wazuh-agent
+        state: started
+        enabled: yes
+      when: ansible_os_family == "Debian" and "not_manager" in manager_check_debian.stdout or ansible_os_family == "RedHat" and "not_manager" in manager_check_redhat.stdout
+
+    # Tarea 8: Verificar el estado del agente
+    - name: Verificar el estado del agente
+      shell: systemctl status wazuh-agent
+      register: agent_status
+      changed_when: false
+      when: ansible_os_family == "Debian" and "not_manager" in manager_check_debian.stdout or ansible_os_family == "RedHat" and "not_manager" in manager_check_redhat.stdout
+
+    # Tarea 9: Mostrar el estado del agente
+    - name: Mostrar el estado del agente
+      debug:
+        var: agent_status.stdout_lines
+      when: ansible_os_family == "Debian" and "not_manager" in manager_check_debian.stdout or ansible_os_family == "RedHat" and "not_manager" in manager_check_redhat.stdout 

@@ -1,0 +1,88 @@
+---
+# Este playbook de Ansible implementa medidas de hardening en un servidor bastion basado en Amazon Linux 2.
+
+- name: Hardening de servidor bastion - Amazon Linux 2
+  hosts: bastion  # Define que las tareas se ejecutarán en los hosts del grupo 'bastion'.
+  become: yes     # Escala privilegios para ejecutar las tareas como usuario root.
+
+  tasks:
+    # Primera tarea: Deshabilitar el login SSH como root.
+    - name: Deshabilitar login SSH como root
+      lineinfile:
+        path: /etc/ssh/sshd_config  # Archivo de configuración de SSH.
+        regexp: '^PermitRootLogin' # Busca la línea que comienza con 'PermitRootLogin'.
+        line: 'PermitRootLogin no' # Establece que el login como root no está permitido.
+        create: yes                # Crea la línea si no existe.
+      notify: Reiniciar SSH        # Notifica al handler para reiniciar el servicio SSH.
+
+    # Segunda tarea: Instalar firewalld.
+    - name: Instalar firewalld
+      yum:
+        name: firewalld            # Nombre del paquete a instalar.
+        state: present             # Asegura que el paquete esté instalado.
+
+    # Tercera tarea: Habilitar e iniciar firewalld.
+    - name: Habilitar e iniciar firewalld
+      systemd:
+        name: firewalld            # Nombre del servicio.
+        enabled: true              # Habilita el servicio para que inicie automáticamente.
+        state: started             # Asegura que el servicio esté en ejecución.
+
+    # Cuarta tarea: Permitir tráfico SSH en firewalld.
+    - name: Permitir tráfico SSH en firewalld
+      firewalld:
+        service: ssh               # Habilita el servicio SSH en el firewall.
+        permanent: true            # Hace que la regla sea persistente tras reinicios.
+        state: enabled             # Asegura que la regla esté habilitada.
+        immediate: true            # Aplica la regla inmediatamente.
+
+    # Quinta tarea: Instalar el repositorio EPEL para paquetes adicionales.
+    - name: Instalar fail2ban
+      yum:
+        name: epel-release         # Instala el repositorio EPEL.
+        state: present             # Asegura que esté instalado.
+
+    # Sexta tarea: Instalar fail2ban.
+    - name: Instalar fail2ban core
+      yum:
+        name: fail2ban             # Nombre del paquete fail2ban.
+        state: present             # Asegura que esté instalado.
+
+    # Séptima tarea: Activar fail2ban.
+    - name: Activar fail2ban
+      systemd:
+        name: fail2ban             # Nombre del servicio.
+        enabled: true              # Habilita el servicio para que inicie automáticamente.
+        state: started             # Asegura que el servicio esté en ejecución.
+
+    # Octava tarea: Eliminar paquetes innecesarios (ejemplo: telnet).
+    - name: Eliminar paquetes innecesarios (telnet como ejemplo)
+      yum:
+        name: telnet               # Nombre del paquete a eliminar.
+        state: absent              # Asegura que el paquete esté desinstalado.
+
+    # Novena tarea: Configurar un banner legal.
+    - name: Configurar banner legal
+      copy:
+        content: |                 # Contenido del banner.
+          ¡ATENCIÓN! Acceso restringido. Toda actividad será registrada y supervisada.
+        dest: /etc/issue.net       # Archivo donde se guardará el banner.
+        owner: root                # Propietario del archivo.
+        group: root                # Grupo del archivo.
+        mode: '0644'               # Permisos del archivo.
+
+    # Décima tarea: Activar el uso del banner en SSH.
+    - name: Activar uso del banner en SSH
+      lineinfile:
+        path: /etc/ssh/sshd_config # Archivo de configuración de SSH.
+        regexp: '^Banner'          # Busca la línea que comienza con 'Banner'.
+        line: 'Banner /etc/issue.net' # Establece la ruta del banner.
+        create: yes                # Crea la línea si no existe.
+      notify: Reiniciar SSH        # Notifica al handler para reiniciar el servicio SSH.
+
+  handlers:
+    # Handler para reiniciar el servicio SSH cuando sea notificado.
+    - name: Reiniciar SSH
+      systemd:
+        name: sshd                 # Nombre del servicio SSH.
+        state: restarted           # Reinicia el servicio.

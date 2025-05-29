@@ -1,0 +1,154 @@
+---
+# Playbook para instalar y configurar Nessus Essentials
+# Este playbook realiza las siguientes acciones:
+# 1. Desinstala OpenVAS si está presente
+# 2. Instala Nessus Essentials
+# 3. Configura el firewall
+# 4. Inicia el servicio
+
+- name: Instalar y configurar Nessus Essentials
+  hosts: nessus-scanner  # Grupo de hosts donde se instalará Nessus
+  become: yes  # Ejecuta las tareas con privilegios de root
+  vars:
+    # Variables para la instalación
+    nessus_version: "10.8.4"  # Versión de Nessus a instalar
+    nessus_deb: "Nessus-{{ nessus_version }}-ubuntu1604_amd64.deb"  # Nombre del archivo .deb
+
+  tasks:
+    # Tarea para detener y desinstalar OpenVAS si está instalado
+    - name: Detener y desinstalar OpenVAS si está instalado
+      shell: |
+        # Detiene los servicios de OpenVAS si están activos
+        if systemctl is-active --quiet openvas-scanner; then
+          systemctl stop openvas-scanner
+        fi
+        if systemctl is-active --quiet openvas-manager; then
+          systemctl stop openvas-manager
+        fi
+        if systemctl is-active --quiet greenbone-security-assistant; then
+          systemctl stop greenbone-security-assistant
+        fi
+        # Desinstala los paquetes de OpenVAS y elimina archivos residuales
+        apt-get remove -y --purge openvas* greenbone*
+        apt-get autoremove -y
+        rm -rf /var/lib/openvas
+        rm -rf /var/log/openvas
+        rm -rf /etc/openvas
+        rm -rf /var/cache/openvas
+        rm -rf ~/.openvas
+        snap remove openvas
+      ignore_errors: yes  # Continúa aunque haya errores
+
+    # Elimina el usuario de OpenVAS si existe
+    - name: Eliminar usuario openvas si existe
+      user:
+        name: openvas
+        state: absent
+        remove: yes
+
+    # Detiene y elimina cualquier instalación previa de Nessus
+    - name: Detener y eliminar Nessus completamente
+      shell: |
+        # Detiene y deshabilita el servicio de Nessus
+        systemctl stop nessusd || true
+        systemctl disable nessusd || true
+        # Desinstala el paquete de Nessus
+        dpkg --purge nessus || true
+        # Elimina todos los archivos y directorios relacionados con Nessus
+        rm -rf /opt/nessus
+        rm -rf /var/opt/nessus
+        rm -rf /etc/nessus
+        rm -rf /var/lib/nessus
+        rm -rf /var/log/nessus
+        rm -f /etc/systemd/system/nessusd.service
+        # Recarga el daemon de systemd
+        systemctl daemon-reload
+      ignore_errors: yes
+
+    # Instala las dependencias necesarias
+    - name: Instalar dependencias necesarias
+      apt:
+        name: 
+          - curl  # Para descargar archivos
+          - ufw   # Para configurar el firewall
+          - default-jre  # Java Runtime Environment para Nessus
+          - default-jdk  # Java Development Kit (por si es necesario)
+        state: present
+        update_cache: yes  # Actualiza la caché de paquetes
+
+    # Verifica la instalación de Java
+    - name: Verificar instalación de Java
+      shell: java -version
+      register: java_version
+      changed_when: false
+      ignore_errors: yes
+
+    # Muestra la versión de Java instalada
+    - name: Mostrar versión de Java
+      debug:
+        var: java_version.stdout_lines
+      when: java_version.stdout_lines is defined
+
+    # Descarga el instalador de Nessus desde el sitio oficial
+    - name: Descargar Nessus Essentials
+      get_url:
+        url: "https://www.tenable.com/downloads/api/v2/pages/nessus/files/{{ nessus_deb }}"
+        dest: "/tmp/{{ nessus_deb }}"
+        mode: '0644'  # Permisos del archivo
+
+    # Instala Nessus usando dpkg con opciones forzadas
+    - name: Instalar Nessus usando dpkg con opciones forzadas
+      shell: |
+        # DEBIAN_FRONTEND=noninteractive evita prompts durante la instalación
+        # --force-confdef --force-confold --force-remove-reinstreq fuerzan la instalación
+        DEBIAN_FRONTEND=noninteractive dpkg --force-confdef --force-confold --force-remove-reinstreq -i /tmp/{{ nessus_deb }}
+      args:
+        creates: /opt/nessus  # Evita reinstalación si el directorio existe
+      register: dpkg_result
+      ignore_errors: yes
+
+    # Verifica que la instalación fue exitosa
+    - name: Verificar instalación de Nessus
+      stat:
+        path: /opt/nessus
+      register: nessus_installed
+
+    # Falla si la instalación no fue exitosa
+    - name: Fallar si la instalación no fue exitosa
+      fail:
+        msg: "La instalación de Nessus falló. Por favor, verifica los logs para más detalles."
+      when: not nessus_installed.stat.exists
+
+    # Inicia el servicio de Nessus y lo configura para que inicie automáticamente
+    - name: Iniciar servicio Nessus
+      systemd:
+        name: nessusd
+        state: started
+        enabled: yes
+
+    # Configura el firewall para permitir el tráfico a Nessus
+    - name: Configurar firewall para Nessus
+      ufw:
+        rule: allow
+        port: '8834'  # Puerto por defecto de Nessus
+        proto: tcp
+
+    # Limpia el archivo de instalación
+    - name: Limpiar archivo de instalación
+      file:
+        path: "/tmp/{{ nessus_deb }}"
+        state: absent
+
+    # Muestra instrucciones de acceso
+    - name: Mostrar instrucciones de acceso
+      debug:
+        msg: |
+          Nessus Essentials ha sido instalado correctamente.
+          
+          Para acceder a Nessus:
+          1. Abre tu navegador y ve a https://{{ ansible_host }}:8834
+          2. Acepta el certificado autofirmado
+          3. Crea una cuenta de administrador
+          4. Activa Nessus Essentials con tu clave gratuita de Tenable
+          
+          Nota: La primera inicialización puede tardar varios minutos. 

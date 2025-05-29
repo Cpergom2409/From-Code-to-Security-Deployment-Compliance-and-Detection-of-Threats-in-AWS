@@ -1,0 +1,374 @@
+---
+# Playbook para instalar y configurar Wazuh, Wazuh Indexer, Wazuh Dashboard y Filebeat
+# Este playbook realiza la instalación completa de la plataforma Wazuh, incluyendo la generación de certificados
+# y la configuración de los servicios necesarios para el funcionamiento correcto.
+
+- name: Instalar Wazuh
+  hosts: wazuh
+  become: yes
+  vars:
+    # Versiones de los componentes de Wazuh
+    wazuh_version: "4.7.0"
+    wazuh_indexer_version: "4.7.0"
+    wazuh_dashboard_version: "4.7.0"
+    # Configuración del cluster de Wazuh Indexer
+    wazuh_indexer_master_nodes: ["node-1"]
+    wazuh_indexer_cluster_name: "wazuh-cluster"
+    wazuh_indexer_node_name: "node-1"
+    wazuh_indexer_network_host: "0.0.0.0"
+    # Configuración del Wazuh Dashboard
+    wazuh_dashboard_host: "0.0.0.0"
+    wazuh_dashboard_port: "5601"
+    wazuh_dashboard_ssl_enabled: false
+    # Configuración de SSL para Wazuh Indexer
+    wazuh_indexer_ssl_enabled: true
+    wazuh_indexer_ssl_verification: "none"
+    wazuh_indexer_ssl_certificate_authorities: "/etc/wazuh-indexer/certs/root-ca.pem"
+    wazuh_indexer_ssl_certificate: "/etc/wazuh-indexer/certs/indexer.pem"
+    wazuh_indexer_ssl_key: "/etc/wazuh-indexer/certs/indexer-key.pem"
+    # Configuración de SSL para Wazuh Dashboard
+    wazuh_dashboard_ssl_certificate_authorities: "/etc/wazuh-indexer/certs/root-ca.pem"
+    wazuh_dashboard_ssl_certificate: "/etc/wazuh-indexer/certs/dashboard.pem"
+    wazuh_dashboard_ssl_key: "/etc/wazuh-indexer/certs/dashboard-key.pem"
+
+  tasks:
+    # Instalación de dependencias necesarias para Wazuh
+    - name: Instalar dependencias
+      apt:
+        name:
+          - apt-transport-https
+          - curl
+          - gnupg2
+          - lsb-release
+          - python3-pip
+          - default-jre
+          - openssl
+        state: present
+        update_cache: yes
+
+    # Añadir la clave GPG de Wazuh para la autenticación del repositorio
+    - name: Añadir clave GPG de Wazuh
+      apt_key:
+        url: https://packages.wazuh.com/key/GPG-KEY-WAZUH
+        state: present
+
+    # Configurar el repositorio de Wazuh para la instalación de paquetes
+    - name: Añadir repositorio de Wazuh
+      apt_repository:
+        repo: "deb https://packages.wazuh.com/4.x/apt/ stable main"
+        state: present
+        filename: wazuh
+
+    # Instalación del Wazuh Manager
+    - name: Instalar Wazuh Manager
+      apt:
+        name: wazuh-manager
+        state: present
+        update_cache: yes
+
+    # Instalación del Wazuh Indexer
+    - name: Instalar Wazuh Indexer
+      apt:
+        name: wazuh-indexer
+        state: present
+        update_cache: yes
+
+    # Instalación del Wazuh Dashboard
+    - name: Instalar Wazuh Dashboard
+      apt:
+        name: wazuh-dashboard
+        state: present
+        update_cache: yes
+
+    # Crear directorio para almacenar los certificados de Wazuh Indexer
+    - name: Crear directorio para certificados
+      file:
+        path: /etc/wazuh-indexer/certs
+        state: directory
+        mode: '0711'
+        owner: wazuh-indexer
+        group: wazuh-indexer
+
+    # Generar el certificado de la Autoridad Certificadora (CA)
+    - name: Generar certificado CA
+      shell: |
+        openssl req -x509 -sha256 -nodes -days 365 -newkey rsa:2048 \
+        -keyout /etc/wazuh-indexer/certs/root-ca.key \
+        -out /etc/wazuh-indexer/certs/root-ca.pem \
+        -subj "/C=US/ST=California/L=California/O=Wazuh/OU=Wazuh/CN=Root CA"
+      args:
+        creates: /etc/wazuh-indexer/certs/root-ca.pem
+
+    # Generar el certificado para el Wazuh Indexer
+    - name: Generar certificado del indexer
+      shell: |
+        openssl req -new -nodes -newkey rsa:2048 \
+        -keyout /etc/wazuh-indexer/certs/indexer-key.pem \
+        -out /etc/wazuh-indexer/certs/indexer.csr \
+        -subj "/C=US/ST=California/L=California/O=Wazuh/OU=Wazuh/CN=indexer"
+      args:
+        creates: /etc/wazuh-indexer/certs/indexer-key.pem
+
+    # Firmar el certificado del Wazuh Indexer con la CA
+    - name: Firmar certificado del indexer
+      shell: |
+        openssl x509 -req -days 365 -in /etc/wazuh-indexer/certs/indexer.csr \
+        -CA /etc/wazuh-indexer/certs/root-ca.pem \
+        -CAkey /etc/wazuh-indexer/certs/root-ca.key \
+        -CAcreateserial \
+        -out /etc/wazuh-indexer/certs/indexer.pem
+      args:
+        creates: /etc/wazuh-indexer/certs/indexer.pem
+
+    # Generar el certificado para el Wazuh Dashboard
+    - name: Generar certificado del dashboard
+      shell: |
+        openssl req -new -nodes -newkey rsa:2048 \
+        -keyout /etc/wazuh-indexer/certs/dashboard-key.pem \
+        -out /etc/wazuh-indexer/certs/dashboard.csr \
+        -subj "/C=US/ST=California/L=California/O=Wazuh/OU=Wazuh/CN=dashboard"
+      args:
+        creates: /etc/wazuh-indexer/certs/dashboard-key.pem
+
+    # Firmar el certificado del Wazuh Dashboard con la CA
+    - name: Firmar certificado del dashboard
+      shell: |
+        openssl x509 -req -days 365 -in /etc/wazuh-indexer/certs/dashboard.csr \
+        -CA /etc/wazuh-indexer/certs/root-ca.pem \
+        -CAkey /etc/wazuh-indexer/certs/root-ca.key \
+        -CAcreateserial \
+        -out /etc/wazuh-indexer/certs/dashboard.pem
+      args:
+        creates: /etc/wazuh-indexer/certs/dashboard.pem
+
+    # Configurar los permisos de los certificados del Wazuh Indexer
+    - name: Configurar permisos de certificados del indexer
+      file:
+        path: "{{ item }}"
+        owner: wazuh-indexer
+        group: wazuh-indexer
+        mode: '0644'
+      with_items:
+        - /etc/wazuh-indexer/certs/root-ca.pem
+        - /etc/wazuh-indexer/certs/root-ca.key
+        - /etc/wazuh-indexer/certs/indexer.pem
+        - /etc/wazuh-indexer/certs/indexer-key.pem
+
+    # Configurar los permisos de los certificados del Wazuh Dashboard
+    - name: Configurar permisos de certificados del dashboard
+      file:
+        path: "{{ item }}"
+        owner: wazuh-dashboard
+        group: wazuh-dashboard
+        mode: '0600'
+      with_items:
+        - /etc/wazuh-indexer/certs/dashboard.pem
+        - /etc/wazuh-indexer/certs/dashboard-key.pem
+
+    # Configurar el archivo de configuración del Wazuh Indexer
+    - name: Configurar Wazuh Indexer
+      copy:
+        dest: /etc/wazuh-indexer/opensearch.yml
+        content: |
+          network.host: {{ wazuh_indexer_network_host }}
+          node.name: {{ wazuh_indexer_node_name }}
+          cluster.name: {{ wazuh_indexer_cluster_name }}
+          path.data: /var/lib/wazuh-indexer
+          path.logs: /var/log/wazuh-indexer
+          discovery.type: single-node
+
+          plugins.security.ssl.http.pemcert_filepath: {{ wazuh_indexer_ssl_certificate }}
+          plugins.security.ssl.http.pemkey_filepath: {{ wazuh_indexer_ssl_key }}
+          plugins.security.ssl.http.pemtrustedcas_filepath: {{ wazuh_indexer_ssl_certificate_authorities }}
+          plugins.security.ssl.transport.pemcert_filepath: {{ wazuh_indexer_ssl_certificate }}
+          plugins.security.ssl.transport.pemkey_filepath: {{ wazuh_indexer_ssl_key }}
+          plugins.security.ssl.transport.pemtrustedcas_filepath: {{ wazuh_indexer_ssl_certificate_authorities }}
+          plugins.security.ssl.http.enabled: {{ wazuh_indexer_ssl_enabled }}
+          plugins.security.ssl.transport.enforce_hostname_verification: false
+          plugins.security.ssl.transport.resolve_hostname: false
+
+          plugins.security.authcz.admin_dn:
+            - "CN=admin,OU=Wazuh,O=Wazuh,L=California,ST=California,C=US"
+          plugins.security.nodes_dn:
+            - "CN=indexer,OU=Wazuh,O=Wazuh,L=California,ST=California,C=US"
+            - "CN=dashboard,OU=Wazuh,O=Wazuh,L=California,ST=California,C=US"
+
+          plugins.security.allow_default_init_securityindex: true
+          plugins.security.restapi.roles_enabled:
+            - all_access
+            - security_rest_api_access
+
+          plugins.security.system_indices.enabled: true
+          plugins.security.system_indices.indices: [".plugins-ml-*", ".opendistro-alerting-config", ".opendistro-alerting-alert*", ".opendistro-anomaly-results*", ".opendistro-anomaly-detector*", ".opendistro-anomaly-checkpoints", ".opendistro-anomaly-detection-state", ".opendistro-reports-*", ".opensearch-notifications-*", ".opensearch-notebooks", ".opensearch-observability", ".opendistro-asynchronous-search-response*", ".replication-metadata-store"]
+
+          compatibility.override_main_response_version: true
+
+    # Configurar el archivo de configuración del Wazuh Dashboard
+    - name: Configurar Wazuh Dashboard
+      copy:
+        dest: /etc/wazuh-dashboard/opensearch_dashboards.yml
+        content: |
+          server.host: {{ wazuh_dashboard_host }}
+          server.port: {{ wazuh_dashboard_port }}
+          opensearch.hosts: https://localhost:9200
+          opensearch.ssl.verificationMode: {{ wazuh_indexer_ssl_verification }}
+          opensearch.ssl.certificateAuthorities: {{ wazuh_dashboard_ssl_certificate_authorities }}
+          opensearch.ssl.certificate: {{ wazuh_dashboard_ssl_certificate }}
+          opensearch.ssl.key: {{ wazuh_dashboard_ssl_key }}
+          opensearch.requestHeadersAllowlist: ["securitytenant","Authorization"]
+          opensearch_security.multitenancy.enabled: false
+          opensearch_security.readonly_mode.roles: ["kibana_read_only"]
+          server.ssl.enabled: {{ wazuh_dashboard_ssl_enabled }}
+          uiSettings.overrides.defaultRoute: /app/wz-home
+
+    # Crear directorio para almacenar los certificados del Wazuh Dashboard
+    - name: Crear directorio de certificados para dashboard
+      file:
+        path: /etc/wazuh-dashboard/certs
+        state: directory
+        owner: wazuh-dashboard
+        group: wazuh-dashboard
+        mode: '0755'
+
+    # Copiar los certificados necesarios al directorio del Wazuh Dashboard
+    - name: Copiar certificados al dashboard
+      copy:
+        src: "/etc/wazuh-indexer/certs/{{ item }}"
+        dest: "/etc/wazuh-dashboard/certs/{{ item }}"
+        remote_src: yes
+        owner: wazuh-dashboard
+        group: wazuh-dashboard
+        mode: '0600'
+      with_items:
+        - root-ca.pem
+        - dashboard.pem
+        - dashboard-key.pem
+
+    # Asegurar los permisos del directorio principal de Wazuh Indexer
+    - name: Asegurar permisos del directorio wazuh-indexer
+      file:
+        path: /etc/wazuh-indexer
+        state: directory
+        mode: '0711'
+        owner: wazuh-indexer
+        group: wazuh-indexer
+
+    # Reiniciar los servicios de Wazuh para aplicar las configuraciones
+    - name: Reiniciar servicios
+      systemd:
+        name: "{{ item }}"
+        state: restarted
+        daemon_reload: yes
+      with_items:
+        - wazuh-indexer
+        - wazuh-dashboard
+        - wazuh-manager
+
+    # Esperar a que los servicios estén disponibles antes de continuar
+    - name: Esperar a que los servicios estén disponibles
+      wait_for:
+        host: localhost
+        port: "{{ item }}"
+        timeout: 300
+      with_items:
+        - 9200  # Wazuh Indexer
+        - 5601  # Wazuh Dashboard
+        - 1514  # Wazuh Manager
+
+    # Verificar que los servicios estén en estado 'started'
+    - name: Verificar estado de los servicios
+      systemd:
+        name: "{{ item }}"
+        state: started
+      with_items:
+        - wazuh-manager
+        - wazuh-indexer
+        - wazuh-dashboard
+
+    # Asegurar que el usuario wazuh-indexer exista
+    - name: Asegurar usuario wazuh-indexer
+      ansible.builtin.user:
+        name: wazuh-indexer
+        state: present
+
+    # Asegurar que el usuario wazuh-dashboard exista
+    - name: Asegurar usuario wazuh-dashboard
+      ansible.builtin.user:
+        name: wazuh-dashboard
+        state: present
+
+    # Limpiar certificados previos si existen para evitar conflictos
+    - name: Limpiar certificados previos si existen
+      file:
+        path: "/etc/wazuh-indexer/certs/{{ item }}"
+        state: absent
+      with_items:
+        - root-ca.pem
+        - root-ca.key
+        - indexer.pem
+        - indexer-key.pem
+        - dashboard.pem
+        - dashboard-key.pem
+      ignore_errors: yes
+
+    # Instalar Filebeat para enviar logs de alertas al Wazuh Indexer
+    - name: Instalar Filebeat
+      apt:
+        name: filebeat
+        state: present
+        update_cache: yes
+
+    # Configurar Filebeat para leer los logs de alertas de Wazuh y enviarlos al Indexer
+    - name: Copiar configuración de Filebeat para Wazuh
+      copy:
+        dest: /etc/filebeat/filebeat.yml
+        content: |
+          filebeat.inputs:
+            - type: log
+              enabled: true
+              paths:
+                - /var/ossec/logs/alerts/alerts.json
+              json.keys_under_root: true
+              json.add_error_key: true
+              json.message_key: log
+
+          output.elasticsearch:
+            hosts: ["https://localhost:9200"]
+            username: "admin"
+            password: "{YOUR-WAZUH-PASSWORD}"
+            ssl.certificate_authorities: ["/etc/wazuh-indexer/certs/root-ca.pem"]
+            ssl.certificate: "/etc/wazuh-indexer/certs/indexer.pem"
+            ssl.key: "/etc/wazuh-indexer/certs/indexer-key.pem"
+            ssl.verification_mode: none
+
+          setup.template.enabled: false
+          setup.ilm.enabled: false
+
+    # Habilitar y arrancar el servicio de Filebeat
+    - name: Habilitar y arrancar Filebeat
+      systemd:
+        name: filebeat
+        enabled: yes
+        state: started
+
+    # Descargar y modificar la plantilla oficial de Wazuh para OpenSearch
+    - name: Descargar plantilla de índice de Wazuh
+      get_url:
+        url: https://raw.githubusercontent.com/wazuh/wazuh/4.7/extensions/elasticsearch/7.x/wazuh-template.json
+        dest: /tmp/wazuh-template.json
+        mode: '0644'
+
+    - name: Añadir subcampo keyword a todos los campos text en la plantilla
+      ansible.builtin.shell: |
+        sed -i 's/"type": "text"/"type": "text", "fields": { "keyword": { "type": "keyword", "ignore_above": 256 } }/g' /tmp/wazuh-template.json
+      args:
+        executable: /bin/bash
+
+    # Aplicar la plantilla usando la API legacy de OpenSearch
+    - name: Aplicar plantilla de índice de Wazuh en OpenSearch
+      ansible.builtin.shell: |
+        curl -ku admin:admin -XPUT https://localhost:9200/_template/wazuh -H "Content-Type: application/json" -d@/tmp/wazuh-template.json
+      register: wazuh_template_result
+      changed_when: wazuh_template_result.stdout is search('"acknowledged":true')
+      failed_when: wazuh_template_result.stdout is not search('"acknowledged":true')
+      tags: wazuh-template 

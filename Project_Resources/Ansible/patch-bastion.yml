@@ -1,0 +1,20 @@
+---
+# Este archivo es un playbook de Ansible diseñado para aplicar parches de seguridad
+# y reiniciar un servidor bastion si es necesario.
+
+- name: Aplicar parches al bastion
+  hosts: bastion  # Define que este playbook se ejecutará en los hosts del grupo 'bastion'.
+  become: yes     # Escala privilegios para ejecutar las tareas como usuario root.
+
+  tasks:
+    # Primera tarea: Actualizar todos los paquetes en el sistema operativo.
+    - name: Actualizar todos los paquetes (Amazon Linux)
+      yum:
+        name: "*"          # Indica que se deben actualizar todos los paquetes instalados.
+        state: latest      # Asegura que los paquetes estén en su última versión disponible.
+
+    # Segunda tarea: Reiniciar el sistema si es necesario.
+    - name: Reiniciar si es necesario
+      reboot:
+        msg: "Reinicio automático tras aplicar parches de seguridad"  # Mensaje que se mostrará durante el reinicio.
+        reboot_timeout: 600  # Tiempo máximo de espera (en segundos) para que el sistema se reinicie.
